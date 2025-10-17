@@ -1,54 +1,61 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { isUnauthorizedError } from "@/lib/authUtils";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import ChatMessage from "./ChatMessage";
 import { Send, Sparkles } from "lucide-react";
-
-interface Message {
-  id: string;
-  message: string;
-  sender: "user" | "ai";
-  timestamp: string;
-}
+import type { ChatMessage as ChatMessageType } from "@shared/schema";
 
 interface ChatInterfaceProps {
   className?: string;
 }
 
 export default function ChatInterface({ className = "" }: ChatInterfaceProps) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      message: "Welcome to AI ANTONIOS INTELLIGENCE! I'm your zodiac guide. How can I help you today?",
-      sender: "ai",
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    },
-  ]);
   const [inputValue, setInputValue] = useState("");
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  // Fetch chat history
+  const { data: chatHistory = [] } = useQuery<ChatMessageType[]>({
+    queryKey: ['/api/chat/history'],
+  });
+
+  // Send chat message mutation
+  const sendMessageMutation = useMutation({
+    mutationFn: async (message: string) => {
+      return await apiRequest('POST', '/api/chat', { message });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/chat/history'] });
+      setInputValue("");
+    },
+    onError: (error: Error) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+        return;
+      }
+      toast({
+        title: "Error",
+        description: "Failed to send message",
+        variant: "destructive",
+      });
+    },
+  });
 
   const handleSend = () => {
-    if (!inputValue.trim()) return;
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      message: inputValue,
-      sender: "user",
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    setInputValue("");
-
-    setTimeout(() => {
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        message: "I understand your question about zodiac compatibility. Let me provide insights based on astrological wisdom...",
-        sender: "ai",
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      };
-      setMessages((prev) => [...prev, aiMessage]);
-    }, 1000);
+    if (!inputValue.trim() || sendMessageMutation.isPending) return;
+    sendMessageMutation.mutate(inputValue);
   };
 
   return (
@@ -62,14 +69,37 @@ export default function ChatInterface({ className = "" }: ChatInterfaceProps) {
 
       <ScrollArea className="flex-1 p-4" data-testid="chat-messages">
         <div className="flex flex-col gap-4">
-          {messages.map((msg) => (
+          {chatHistory.length === 0 && !sendMessageMutation.isPending && (
+            <div className="text-center text-muted-foreground py-8">
+              <Sparkles className="w-12 h-12 mx-auto mb-3 text-primary/50" />
+              <p>Ask me anything about zodiac compatibility, predictions, or cosmic guidance!</p>
+            </div>
+          )}
+          
+          {chatHistory.map((msg) => (
             <ChatMessage
               key={msg.id}
               message={msg.message}
-              sender={msg.sender}
-              timestamp={msg.timestamp}
+              sender={msg.sender as "user" | "ai"}
+              timestamp={new Date(msg.timestamp!).toLocaleTimeString([], { 
+                hour: '2-digit', 
+                minute: '2-digit' 
+              })}
             />
           ))}
+
+          {sendMessageMutation.isPending && (
+            <div className="flex gap-3 items-end">
+              <div className="w-8 h-8 border-2 border-primary/50 rounded-full" />
+              <div className="bg-muted rounded-lg rounded-bl-none px-4 py-2">
+                <div className="flex gap-1">
+                  <div className="w-2 h-2 bg-primary/50 rounded-full animate-bounce" />
+                  <div className="w-2 h-2 bg-primary/50 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
+                  <div className="w-2 h-2 bg-primary/50 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </ScrollArea>
 
@@ -86,9 +116,15 @@ export default function ChatInterface({ className = "" }: ChatInterfaceProps) {
             onChange={(e) => setInputValue(e.target.value)}
             placeholder="Ask about zodiac compatibility, predictions..."
             className="flex-1 bg-background/50"
+            disabled={sendMessageMutation.isPending}
             data-testid="input-chat-message"
           />
-          <Button type="submit" size="icon" data-testid="button-send-message">
+          <Button 
+            type="submit" 
+            size="icon" 
+            disabled={!inputValue.trim() || sendMessageMutation.isPending}
+            data-testid="button-send-message"
+          >
             <Send className="w-4 h-4" />
           </Button>
         </form>
