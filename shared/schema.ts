@@ -75,3 +75,36 @@ export const zodiacCompatibility = pgTable("zodiac_compatibility", {
 });
 
 export type ZodiacCompatibility = typeof zodiacCompatibility.$inferSelect;
+app.use('/assets', express.static(path.join(__dirname, 'attached_assets')));
+// Gate video chat by zodiac compatibility
+app.post('/api/check-compatibility', async (req, res) => {
+  const { userSign, partnerSign } = req.body;
+  const match = await db.query.zodiacCompatibility.findFirst({
+    where: (z) => z.sign === userSign,
+  });
+
+  if (!match || !match.compatibleSigns.includes(partnerSign)) {
+    return res.status(403).json({ message: "Incompatible signs" });
+  }
+
+  res.json({ compatible: true });
+});
+
+// Serve zodiac-based avatar from attached_assets
+app.get('/api/avatar/:sign', (req, res) => {
+  const filePath = path.join(__dirname, 'attached_assets', `${req.params.sign}-avatar.png`);
+  res.sendFile(filePath);
+});
+
+// Log chat messages to PostgreSQL
+app.post('/api/chat', async (req, res) => {
+  const { userId, message, sender } = req.body;
+
+  await db.insert(chatMessages).values({
+    userId,
+    message,
+    sender,
+  });
+
+  res.json({ status: "saved" });
+});
